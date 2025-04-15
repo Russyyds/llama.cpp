@@ -1,4 +1,3 @@
-import gguf
 import argparse
 import logging
 import sys
@@ -9,7 +8,8 @@ import numpy as np
 from typing import cast, ContextManager, Any, Iterator
 from pathlib import Path
 from torch import Tensor
-
+sys.path.append(str(Path(__file__).parent / "../../gguf-py"))
+import gguf
 logger = logging.getLogger("gemma3-mmproj")
 
 

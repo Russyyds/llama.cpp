@@ -5379,6 +5379,53 @@ class ChameleonModel(Model):
         data_torch = data_torch.repeat_interleave(n_heads, 0)
         return data_torch
 
+@Model.register("InternVLChatModel")
+class InternVL3Model(Model):
+    model_arch = gguf.MODEL_ARCH.QWEN2
+    has_vision: bool = False
+
+    def __init__(self, *args, **kwargs):
+        hparams = kwargs["hparams"] if "hparams" in kwargs else Model.load_hparams(args[0])
+        if "llm_config" in hparams:
+            hparams = {**hparams, **hparams["llm_config"]}
+            kwargs["hparams"] = hparams
+        super().__init__(*args, **kwargs)
+        if "vision_config" in hparams:
+            self.has_vision = True
+            logger.info("Has vision encoder, but it will be ignored")
+    
+    def set_vocab(self):
+        try:
+            self._set_vocab_sentencepiece()
+        except FileNotFoundError:
+            self._set_vocab_gpt2()
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+        if self.hparams.get("rope_scaling") is not None and "factor" in self.hparams["rope_scaling"] and "yarn" == self.hparams["rope_scaling"].get("type"):
+            self.gguf_writer.add_rope_scaling_type(gguf.RopeScalingType.YARN)
+            self.gguf_writer.add_rope_factor(self.hparams["rope_scaling"]["factor"])
+            self.gguf_writer.add_rope_scaling_orig_ctx_len(self.hparams["rope_scaling"]["original_max_position_embeddings"])
+
+    def write(self):
+        super().write()
+        if self.has_vision:
+            logger.info("NOTE: this script only convert the language model to GGUF")
+            logger.info("      for the vision model, please use internvl3_convert_encoder_to_gguf.py")
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        del bid
+        if name.startswith("language_model."):
+            name = name.replace("language_model.", "")
+        elif name.startswith("vision_model.") or name.startswith("mlp1"):
+            return []
+        if "embed_tokens.weight" in name:
+            vocab = self.hparams["vocab_size"]
+            data_torch = data_torch[:vocab]
+        if name.endswith("norm.weight"):
+            data_torch = data_torch + 1
+        return [(self.map_tensor_name(name), data_torch)]
+
 
 ###### CONVERSION LOGIC ######
 
