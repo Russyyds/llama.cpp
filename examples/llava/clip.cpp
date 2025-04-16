@@ -158,6 +158,7 @@ struct clip_hparams {
     int32_t projection_dim;
     int32_t n_head;
     int32_t n_layer;
+    float downsample_rate = 0.5f; // down sample before projector
 
     patch_merge_type mm_patch_merge_type = PATCH_MERGE_FLAT;
 
@@ -570,11 +571,11 @@ static ggml_cgraph * clip_image_build_graph_legacy(clip_ctx * ctx, const clip_im
     auto ctx0 = ctx0_ptr.get();
 
     struct ggml_cgraph * gf = ggml_new_graph(ctx0);
-
+    //  inp_raw shape [448, 448, 3, 1]
     struct ggml_tensor * inp_raw = ggml_new_tensor_4d(ctx0, GGML_TYPE_F32, image_size_width, image_size_height, 3, batch_size);
     ggml_set_name(inp_raw, "inp_raw");
     ggml_set_input(inp_raw);
-
+    // inp->ne = [32, 32, 1024, 1] [H, W, C, N]
     struct ggml_tensor * inp = ggml_conv_2d(ctx0, model.patch_embeddings_0, inp_raw, patch_size, patch_size, 0, 0, 1, 1);
 
     if (ctx->has_qwen2vl_merger) {
@@ -607,7 +608,7 @@ static ggml_cgraph * clip_image_build_graph_legacy(clip_ctx * ctx, const clip_im
     struct ggml_tensor * embeddings = inp;
     struct ggml_tensor * pos_embed = nullptr;
 
-    if (ctx->has_llava_projector) {
+    if (ctx->has_llava_projector || (ctx->proj_type == PROJECTOR_TYPE_INTERNVL3)) {
         // concat class_embeddings and patch_embeddings
         if (model.class_embedding) {
             embeddings = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, hidden_size, num_positions, batch_size);
@@ -1072,7 +1073,40 @@ static ggml_cgraph * clip_image_build_graph_legacy(clip_ctx * ctx, const clip_im
         embeddings = ggml_mul_mat(ctx0, model.mm_1_w, embeddings);
         embeddings = ggml_add(ctx0, embeddings, model.mm_1_b);
     }
+    else if (ctx->proj_type == PROJECTOR_TYPE_INTERNVL3) {
+            // ggml_tensor_printf(embeddings, "mm_0_w",0,true,false);
+            // First LayerNorm
+            embeddings = ggml_norm(ctx0, embeddings, eps);
+            // Add pixel_shuffle operation
+            // [h * w, c, 1, n] -> [h, w, c, n]
+            // [h, w, c, n] -> [h * w * ds_rate * ds_rate, 1, c / (ds_rate * ds_rate), n]
+            // [h * w * ds_rate * ds_rate, 1, c / (ds_rate * ds_rate), n] -> [c / (ds_rate * ds_rate), h * w * ds_rate * ds_rate, 1, n]
+            int64_t h = sqrt(embeddings->ne[0]);
+            int64_t w = h;
+            int64_t c = embeddings->ne[1];
+            int64_t n = embeddings->ne[2];
+            float downsample_rate = ctx->vision_model.hparams.downsample_rate;
+            embeddings = ggml_permute(ctx0, embeddings, 0, 2, 1, 3);
+            embeddings = ggml_reshape_4d(ctx0, embeddings, h, w, c, n);
+            embeddings = ggml_reshape_4d(ctx0, embeddings, 
+                                                int64_t(h * downsample_rate * w * downsample_rate), 
+                                                1, 
+                                                int64_t(c / (downsample_rate * downsample_rate)), 
+                                                n);
+            embeddings = ggml_permute(ctx0, embeddings, 1, 2, 0, 3);
+            // TOFIX
+            embeddings = ggml_add(ctx0, ggml_mul(ctx0, embeddings, model.mm_0_w),
+                                model.mm_0_b);
+            // First fc
+            embeddings = ggml_mul_mat(ctx0, model.mm_1_w, embeddings);
+            embeddings = ggml_add(ctx0, embeddings, model.mm_1_b);
+            // GELU activation
+            embeddings = ggml_gelu(ctx0, embeddings);
 
+            // Second linear layer
+            embeddings = ggml_mul_mat(ctx0, model.mm_3_w, embeddings);
+            embeddings = ggml_add(ctx0, embeddings, model.mm_3_b);
+        }
     // build the graph
     ggml_build_forward_expand(gf, embeddings);
 
@@ -1187,6 +1221,7 @@ struct clip_model_loader {
             get_u32(KEY_PATCH_SIZE, hparams.patch_size);
             get_u32(KEY_IMAGE_CROP_RESOLUTION, hparams.image_crop_resolution, false);
             get_arr_int(KEY_IMAGE_GRID_PINPOINTS, hparams.image_grid_pinpoints, false);
+            get_f32(KEY_PROJ_DOWNSAMPLE_RATE, hparams.downsample_rate, false);
 
             {
                 std::string mm_patch_merge_type;
@@ -1282,7 +1317,7 @@ struct clip_model_loader {
         vision_model.post_ln_b = get_tensor(string_format(TN_LN_POST, "v", "bias"),   false);
 
         vision_model.patch_bias = get_tensor(TN_PATCH_BIAS, false);
-        vision_model.patch_embeddings_0 = get_tensor(TN_PATCH_EMBD,   false);
+        vision_model.patch_embeddings_0 = get_tensor(TN_PATCH_EMBD,   true);
         vision_model.patch_embeddings_1 = get_tensor(TN_PATCH_EMBD_1, false);
         if (vision_model.patch_embeddings_1 == nullptr) {
             ctx_clip.has_qwen2vl_merger = false;
@@ -1420,6 +1455,15 @@ struct clip_model_loader {
                 {
                     vision_model.mm_input_proj_w = get_tensor(TN_MM_INP_PROJ);
                     vision_model.mm_soft_emb_norm_w = get_tensor(TN_MM_SOFT_EMB_N);
+                } break;
+            case PROJECTOR_TYPE_INTERNVL3:
+                {
+                    vision_model.mm_0_w = get_tensor(string_format(TN_LLAVA_PROJ, 0, "weight"));
+                    vision_model.mm_0_b = get_tensor(string_format(TN_LLAVA_PROJ, 0, "bias"));
+                    vision_model.mm_1_w = get_tensor(string_format(TN_LLAVA_PROJ, 1, "weight"));
+                    vision_model.mm_1_b = get_tensor(string_format(TN_LLAVA_PROJ, 1, "bias"));
+                    vision_model.mm_3_w = get_tensor(string_format(TN_LLAVA_PROJ, 3, "weight"));
+                    vision_model.mm_3_b = get_tensor(string_format(TN_LLAVA_PROJ, 3, "bias"));
                 } break;
             default:
                 GGML_ASSERT(false && "unknown projector type");
@@ -2809,7 +2853,9 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
     if (ctx->proj_type == PROJECTOR_TYPE_GEMMA3) {
         return ctx->vision_model.mm_input_proj_w->ne[0];
     }
-
+    if (ctx->proj_type == PROJECTOR_TYPE_INTERNVL3) {
+        return ctx->vision_model.mm_3_b->ne[0];
+    }
     std::string proj_type = PROJECTOR_TYPE_NAMES[ctx->proj_type];
     throw std::runtime_error(string_format("%s: don't support projector with: %s currently\n", __func__, proj_type.c_str()));
 }
@@ -2835,6 +2881,10 @@ bool clip_is_llava(const struct clip_ctx * ctx) {
 
 bool clip_is_gemma3(const struct clip_ctx * ctx) {
     return ctx->proj_type == PROJECTOR_TYPE_GEMMA3;
+}
+
+bool clip_is_internvl3(const struct clip_ctx * ctx) {
+    return ctx->proj_type == PROJECTOR_TYPE_INTERNVL3;
 }
 
 // Determine the number of encoder layers to iterate over

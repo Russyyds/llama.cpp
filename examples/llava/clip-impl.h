@@ -44,6 +44,7 @@
 #define KEY_MM_PATCH_MERGE_TYPE   "clip.vision.mm_patch_merge_type"
 #define KEY_IMAGE_GRID_PINPOINTS  "clip.vision.image_grid_pinpoints"
 #define KEY_IMAGE_CROP_RESOLUTION "clip.vision.image_crop_resolution"
+#define KEY_PROJ_DOWNSAMPLE_RATE  "clip.vision.downsample_rate"
 
 
 //
@@ -102,6 +103,7 @@ enum projector_type {
     PROJECTOR_TYPE_GLM_EDGE,
     PROJECTOR_TYPE_MERGER,
     PROJECTOR_TYPE_GEMMA3,
+    PROJECTOR_TYPE_INTERNVL3,
     PROJECTOR_TYPE_UNKNOWN,
 };
 
@@ -113,6 +115,7 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_GLM_EDGE,  "adapter"},
     { PROJECTOR_TYPE_MERGER,    "qwen2vl_merger"},
     { PROJECTOR_TYPE_GEMMA3,    "gemma3"},
+    { PROJECTOR_TYPE_INTERNVL3, "internvl3"},
 };
 
 static projector_type clip_projector_type_from_string(const std::string & str) {

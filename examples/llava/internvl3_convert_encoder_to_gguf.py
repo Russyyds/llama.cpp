@@ -53,7 +53,7 @@ class InternVL3VisionTower:
         assert llm_config is not None
         assert vision_config is not None
 
-        self.gguf_writer.add_string("clip.projector_type", "qwen2vl_merger")
+        self.gguf_writer.add_string("clip.projector_type", "internvl3")
         self.gguf_writer.add_bool("clip_has_text_encoder", False)
         self.gguf_writer.add_bool("clip.has_vision_encoder", True)
         self.gguf_writer.add_bool("clip.has_llava_projector", False)
@@ -101,9 +101,9 @@ class InternVL3VisionTower:
         
         name = name.replace("vision_model.encoder.layers.", "v.blk.")
         name = name.replace("vision_model.", "v.")
-        name = name.replace(".embeddings.patch_embedding.", ".patch_embed.")
-        name = name.replace(".embeddings.position_embedding", ".position_embed.weight")
-        name = name.replace(".class_embedding", "class_embed.weight")
+        name = name.replace(".embeddings.patch_embedding.", ".patch_embd.")
+        name = name.replace(".embeddings.position_embedding", ".position_embd.weight")
+        name = name.replace(".embeddings.class_embedding", ".class_embd")
         name = name.replace("mlp1.", "mm.")
         name = name.replace(".mlp.fc1.", ".ffn_down.")
         name = name.replace(".mlp.fc2.", ".ffn_up.")
