@@ -2173,7 +2173,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_ACC:
             ggml_cuda_op_acc(ctx, dst);
             break;
-        case GGML_OP_MUL:
+        case GGML_OP_MUL: // 有个算子这里报错 llama.cpp/ggml/src/ggml-cuda/binbcast.cu:233: GGML_ASSERT(nb10 % sizeof(src1_t) == 0) failed
             ggml_cuda_op_mul(ctx, dst);
             break;
         case GGML_OP_DIV:

@@ -544,12 +544,12 @@ static ggml_cgraph * clip_image_build_graph_legacy(clip_ctx * ctx, const clip_im
         }
     }
     const int patch_size           = hparams.patch_size;
-    const int num_patches          = ((image_size_width / patch_size) * (image_size_height / patch_size));
+    int num_patches          = ((image_size_width / patch_size) * (image_size_height / patch_size));
     const int patches_w            = image_size_width / patch_size;
     const int patches_h            = image_size_height / patch_size;
     const int num_positions        = num_patches + (model.class_embedding ? 1 : 0);
     const int num_position_ids     = ctx->has_qwen2vl_merger ? num_positions * 4 : num_positions;
-    const int hidden_size          = hparams.hidden_size;
+    int hidden_size          = hparams.hidden_size;
     const int n_head               = hparams.n_head;
     const int d_head               = hidden_size / n_head;
     const float eps                = hparams.eps;
@@ -578,6 +578,20 @@ static ggml_cgraph * clip_image_build_graph_legacy(clip_ctx * ctx, const clip_im
     // inp->ne = [32, 32, 1024, 1] [H, W, C, N]
     struct ggml_tensor * inp = ggml_conv_2d(ctx0, model.patch_embeddings_0, inp_raw, patch_size, patch_size, 0, 0, 1, 1);
 
+    // InternVL3 pixel shuffle [32, 32, 1024, 1] -> [16, 16, 4096, 1]
+    // if (ctx->proj_type == PROJECTOR_TYPE_INTERNVL3) {
+    //     float downsample_rate = ctx->vision_model.hparams.downsample_rate;
+    //     GGML_ASSERT(downsample_rate > 0);
+
+    //     int h = int(inp->ne[0] * downsample_rate);
+    //     int w = int(inp->ne[1] * downsample_rate);
+    //     int c = int(inp->ne[2] / (downsample_rate * downsample_rate));
+    //     int n = inp->ne[3];
+    //     hidden_size = c;
+    //     num_patches = h * w;
+
+    //     inp = ggml_reshape_4d(ctx0, inp, h, w, c, n);
+    // }
     if (ctx->has_qwen2vl_merger) {
         GGML_ASSERT(image_size_width % (patch_size * 2) == 0);
         GGML_ASSERT(image_size_height % (patch_size * 2) == 0);
@@ -1074,27 +1088,48 @@ static ggml_cgraph * clip_image_build_graph_legacy(clip_ctx * ctx, const clip_im
         embeddings = ggml_add(ctx0, embeddings, model.mm_1_b);
     }
     else if (ctx->proj_type == PROJECTOR_TYPE_INTERNVL3) {
-            // ggml_tensor_printf(embeddings, "mm_0_w",0,true,false);
             // First LayerNorm
-            embeddings = ggml_norm(ctx0, embeddings, eps);
             // Add pixel_shuffle operation
-            // [h * w, c, 1, n] -> [h, w, c, n]
-            // [h, w, c, n] -> [h * w * ds_rate * ds_rate, 1, c / (ds_rate * ds_rate), n]
-            // [h * w * ds_rate * ds_rate, 1, c / (ds_rate * ds_rate), n] -> [c / (ds_rate * ds_rate), h * w * ds_rate * ds_rate, 1, n]
-            int64_t h = sqrt(embeddings->ne[0]);
+            // remove embedding[0], class_embedding
+            embeddings = ggml_view_4d(ctx0, embeddings, 
+                                            embeddings->ne[0],
+                                            embeddings->ne[1] - 1,
+                                            embeddings->ne[2],
+                                            embeddings->ne[3],
+                                            embeddings->nb[1],
+                                            embeddings->nb[2],
+                                            embeddings->nb[3],
+                                            embeddings->nb[1]
+                                            );
+
+            bool is_cont = ggml_is_contiguous(embeddings);
+            int64_t h = sqrt(embeddings->ne[1]);
             int64_t w = h;
-            int64_t c = embeddings->ne[1];
+            int64_t c = embeddings->ne[0];
             int64_t n = embeddings->ne[2];
             float downsample_rate = ctx->vision_model.hparams.downsample_rate;
-            embeddings = ggml_permute(ctx0, embeddings, 0, 2, 1, 3);
+            // [c, h*w, 1, n] -> [h*w, 1, c, n]
+            embeddings = ggml_permute(ctx0, embeddings, 2, 0, 1, 3);
+            embeddings = ggml_cont_4d(ctx0, embeddings,
+                                            embeddings->ne[0],
+                                            embeddings->ne[1],
+                                            embeddings->ne[2],
+                                            embeddings->ne[3]
+                                            );
+            is_cont = ggml_is_contiguous(embeddings);
+            // [h*w, 1, c, n] -> [h, w, c, n]
             embeddings = ggml_reshape_4d(ctx0, embeddings, h, w, c, n);
+            is_cont = ggml_is_contiguous(embeddings);
+            // [h, w, c, n] -> [h*ds_rate * w*ds_rate, 1, c / (ds_rate^2), n]
             embeddings = ggml_reshape_4d(ctx0, embeddings, 
                                                 int64_t(h * downsample_rate * w * downsample_rate), 
                                                 1, 
                                                 int64_t(c / (downsample_rate * downsample_rate)), 
                                                 n);
+            // [h*ds_rate * w*ds_rate, 1, c / (ds_rate^2), n] -> [c / (ds_rate^2), h*ds_rate * w*ds_rate, 1, n]
             embeddings = ggml_permute(ctx0, embeddings, 1, 2, 0, 3);
             // TOFIX
+            embeddings = ggml_norm(ctx0, embeddings, eps);
             embeddings = ggml_add(ctx0, ggml_mul(ctx0, embeddings, model.mm_0_w),
                                 model.mm_0_b);
             // First fc
@@ -2633,6 +2668,9 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
             free(positions_data);
         }
         else if (ctx->proj_type == PROJECTOR_TYPE_GEMMA3) {
+            // do nothing
+        }
+        else if (ctx->proj_type == PROJECTOR_TYPE_INTERNVL3) {
             // do nothing
         }
         else {
