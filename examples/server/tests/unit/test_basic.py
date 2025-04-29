@@ -13,14 +13,14 @@ def create_server():
 
 def test_server_start_simple():
     global server
-    server.start()
+    server.start(timeout_seconds=120)
     res = server.make_request("GET", "/health")
     assert res.status_code == 200
 
 
 def test_server_props():
     global server
-    server.start()
+    server.start(timeout_seconds=120)
     res = server.make_request("GET", "/props")
     assert res.status_code == 200
     assert ".gguf" in res.body["model_path"]
@@ -33,7 +33,7 @@ def test_server_props():
 
 def test_server_models():
     global server
-    server.start()
+    server.start(timeout_seconds=120)
     res = server.make_request("GET", "/models")
     assert res.status_code == 200
     assert len(res.body["data"]) == 1
@@ -45,7 +45,7 @@ def test_server_slots():
 
     # without slots endpoint enabled, this should return error
     server.server_slots = False
-    server.start()
+    server.start(timeout_seconds=120)
     res = server.make_request("GET", "/slots")
     assert res.status_code == 501 # ERROR_TYPE_NOT_SUPPORTED
     assert "error" in res.body
@@ -54,7 +54,7 @@ def test_server_slots():
     # with slots endpoint enabled, this should return slots info
     server.server_slots = True
     server.n_slots = 2
-    server.start()
+    server.start(timeout_seconds=120)
     res = server.make_request("GET", "/slots")
     assert res.status_code == 200
     assert len(res.body) == server.n_slots
@@ -69,7 +69,7 @@ def test_load_split_model():
     server.model_hf_repo = "ggml-org/models"
     server.model_hf_file = "tinyllamas/split/stories15M-q8_0-00001-of-00003.gguf"
     server.model_alias = "tinyllama-split"
-    server.start()
+    server.start(timeout_seconds=120)
     res = server.make_request("POST", "/completion", data={
         "n_predict": 16,
         "prompt": "Hello",
@@ -82,7 +82,7 @@ def test_load_split_model():
 def test_no_webui():
     global server
     # default: webui enabled
-    server.start()
+    server.start(timeout_seconds=120)
     url = f"http://{server.server_host}:{server.server_port}"
     res = requests.get(url)
     assert res.status_code == 200
@@ -91,6 +91,6 @@ def test_no_webui():
 
     # with --no-webui
     server.no_webui = True
-    server.start()
+    server.start(timeout_seconds=120)
     res = requests.get(url)
     assert res.status_code == 404

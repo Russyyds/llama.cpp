@@ -3,10 +3,10 @@
 #                                 -p "Describe this image in detail" \
 #                                 -ngl 34
                                 # --image /home/jmtang/Workspace/Codes/Models/google/gemma-3-4b-it-qat-q4_0-gguf/surprise.png \
-./build_cuda/bin/llama-gemma3-cli -m /root/workspace/models/google/gemma-3-4b-it-qat-q4_0-gguf/gemma-3-4b-it-q4_0.gguf \
-                                --mmproj /root/workspace/models/google/gemma-3-4b-it-qat-q4_0-gguf/mmproj-model-f16-4B.gguf \
+gdb --args ./build_cuda/bin/llama-gemma3-cli -m /root/workspace/models/OpenGVLab/InternVL3-2B/InternVL3-2B-F16.gguf \
+                                --mmproj /root/workspace/models/OpenGVLab/InternVL3-2B/mmproj.gguf \
                                 -p "Describe this image in detail" \
-                                --image /root/workspace/models/OpenGVLab/InternVL3-2B/examples/image1.jpg \
+                                --image /root/workspace/models/google/gemma-3-4b-it-qat-q4_0-gguf/surprise.png \
                                 -ngl 34                           
 
 # ./build_cuda/bin/llama-llava-cli -m /home/jmtang/Workspace/Codes/Models/mys/ggml_llava-v1.5-7b/ggml-model-q4_k.gguf \

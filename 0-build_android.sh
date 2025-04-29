@@ -37,7 +37,7 @@ cp libOpenCL.so $ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/l
 
 cd ${PROJECT_DIR}
 if [ -d build_android ]; then
-  echo "Directory build already exists, remove it."
+  echo "Directory build_android already exists, remove it."
   rm -rf build_android
 fi
 mkdir build_android

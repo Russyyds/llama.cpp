@@ -1,0 +1,1 @@
+curl --request POST     --url http://localhost:8080/completion     --header "Content-Type: application/json"     --data '{"prompt": "What is the meaning of life?"}'
